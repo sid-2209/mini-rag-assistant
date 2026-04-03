@@ -1,0 +1,5 @@
+{"question": "What date is Republic Day celebrated in India?", "expected_titles": ["India National Holidays Brief"], "expected_answer_contains": ["26 January"]}
+{"question": "When does payroll run?", "expected_titles": ["Team Handbook Excerpt"], "expected_answer_contains": ["last working day"]}
+{"question": "What starts one week before the beta launch?", "expected_titles": ["Product Launch Notes"], "expected_answer_contains": ["Customer support training"]}
+{"question": "What is the office dress code?", "should_refuse": true}
+
