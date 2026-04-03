@@ -30,6 +30,7 @@ More detail is in [`docs/architecture.md`](docs/architecture.md).
 - The assistant never uses external search or background knowledge.
 - Retrieval uses both an absolute score threshold and a relative floor against the best match.
 - Empty retrieval and low-confidence retrieval return the same refusal message.
+- Refusals include the closest rejected chunk citations when available, so the decision is inspectable.
 - The answer is composed only from sentences inside accepted chunks.
 - Citations are always printed, including chunk numbers and retrieval scores.
 

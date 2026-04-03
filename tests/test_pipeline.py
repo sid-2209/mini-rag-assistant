@@ -32,6 +32,16 @@ class MiniRAGAssistantTests(unittest.TestCase):
         self.assertIn("last working day", answer.answer.lower())
         self.assertGreaterEqual(len(answer.citations), 1)
 
+    def test_answer_stays_tight_to_the_question(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            build_index(SAMPLE_DOCS, index_dir=temp_dir, chunk_size=80, chunk_overlap=20)
+            assistant = load_assistant(temp_dir)
+            answer, _ = assistant.answer("What date is Republic Day celebrated in India?")
+
+        self.assertFalse(answer.refused)
+        self.assertIn("26 january", answer.answer.lower())
+        self.assertNotIn("independence day", answer.answer.lower())
+
     def test_unanswerable_question_refuses_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             build_index(SAMPLE_DOCS, index_dir=temp_dir, chunk_size=80, chunk_overlap=20)
@@ -40,9 +50,9 @@ class MiniRAGAssistantTests(unittest.TestCase):
 
         self.assertTrue(answer.refused)
         self.assertEqual(answer.answer, REFUSAL_MESSAGE)
-        self.assertEqual(answer.citations, [])
+        self.assertGreaterEqual(len(answer.citations), 1)
+        self.assertTrue(any(citation.note for citation in answer.citations))
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -38,6 +38,7 @@ class RetrievalResult:
     confidence: float
     refusal_reason: str | None = None
     applied_floor: float = 0.0
+    considered_chunks: list[RetrievedChunk] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -47,6 +48,7 @@ class Citation:
     source: str
     chunk_index: int
     score: float
+    note: str | None = None
 
 
 @dataclass(slots=True)
@@ -56,4 +58,3 @@ class AnswerResult:
     confidence: float = 0.0
     refused: bool = False
     refusal_reason: str | None = None
-

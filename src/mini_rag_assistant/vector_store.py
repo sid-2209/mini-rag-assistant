@@ -98,6 +98,12 @@ class LocalVectorStore:
 
         ranked_indexes = np.argsort(raw_scores)[::-1]
         top_score = float(raw_scores[ranked_indexes[0]])
+        considered_chunks = [
+            RetrievedChunk(chunk=self.chunks[index], score=float(raw_scores[index]))
+            for index in ranked_indexes
+            if float(raw_scores[index]) > 0
+        ][: max(top_k, 2)]
+
         if top_score <= 0:
             return RetrievalResult(
                 [],
@@ -105,6 +111,7 @@ class LocalVectorStore:
                 confidence=0.0,
                 refusal_reason="No relevant chunk was retrieved for this question.",
                 applied_floor=min_score,
+                considered_chunks=[],
             )
 
         applied_floor = max(min_score, top_score * relative_score_floor)
@@ -124,6 +131,7 @@ class LocalVectorStore:
                 confidence=top_score,
                 refusal_reason="Top matches were below the minimum relevance threshold.",
                 applied_floor=applied_floor,
+                considered_chunks=considered_chunks,
             )
 
         mean_score = float(np.mean([item.score for item in retrieved_chunks]))
@@ -133,6 +141,7 @@ class LocalVectorStore:
             top_score=top_score,
             confidence=confidence,
             applied_floor=applied_floor,
+            considered_chunks=considered_chunks,
         )
 
 

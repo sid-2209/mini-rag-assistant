@@ -8,7 +8,7 @@ from pathlib import Path
 from mini_rag_assistant.answering import REFUSAL_MESSAGE
 from mini_rag_assistant.evaluation import load_evaluation_cases, run_evaluation
 from mini_rag_assistant.pipeline import build_index, load_assistant
-from mini_rag_assistant.vector_store import LocalVectorStore, load_manifest
+from mini_rag_assistant.vector_store import LocalVectorStore
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -157,12 +157,13 @@ def _print_answer(answer: str, citations, confidence: float) -> None:
     print("\nSources:")
 
     if not citations:
-        print("- None")
+        print("- No supporting chunks were found.")
     else:
         for citation in citations:
-            print(
-                f"- {citation.title} — {citation.source} (chunk {citation.chunk_index}, score {citation.score:.3f})"
-            )
+            details = f"chunk {citation.chunk_index}, score {citation.score:.3f}"
+            if citation.note:
+                details = f"{details}; {citation.note}"
+            print(f"- {citation.title} — {citation.source} ({details})")
 
     print(f"\nConfidence: {confidence:.3f}")
     if answer == REFUSAL_MESSAGE:

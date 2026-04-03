@@ -8,6 +8,50 @@ from mini_rag_assistant.types import AnswerResult, Citation, RetrievalResult, Re
 
 REFUSAL_MESSAGE = "I don’t have enough information in the provided documents to answer this question."
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+|\n+")
+KEYWORD_PATTERN = re.compile(r"[A-Za-z0-9]+")
+STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "how",
+    "in",
+    "is",
+    "it",
+    "its",
+    "of",
+    "on",
+    "or",
+    "the",
+    "their",
+    "there",
+    "these",
+    "this",
+    "to",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
 
 
 class GroundedAnswerGenerator:
@@ -19,11 +63,12 @@ class GroundedAnswerGenerator:
         question: str,
         retrieval: RetrievalResult,
         *,
-        max_sentences: int = 3,
+        max_sentences: int = 2,
     ) -> AnswerResult:
         if not retrieval.retrieved_chunks:
             return AnswerResult(
                 answer=REFUSAL_MESSAGE,
+                citations=_build_refusal_citations(retrieval),
                 confidence=retrieval.confidence,
                 refused=True,
                 refusal_reason=retrieval.refusal_reason,
@@ -33,20 +78,37 @@ class GroundedAnswerGenerator:
         if not candidate_sentences:
             return AnswerResult(
                 answer=REFUSAL_MESSAGE,
+                citations=_build_refusal_citations(retrieval),
                 confidence=retrieval.confidence,
                 refused=True,
                 refusal_reason="Retrieved chunks did not contain a clear supporting sentence.",
             )
 
         sentence_floor = max(0.12, retrieval.applied_floor * 0.7)
+        best_sentence_score = candidate_sentences[0][0]
+        question_keywords = _extract_keywords(question)
         selected: list[tuple[float, RetrievedChunk, int, str]] = []
         seen_sentences: set[str] = set()
         used_chunks: set[str] = set()
+        covered_keywords: set[str] = set()
 
         for score, retrieved, sentence_index, sentence in candidate_sentences:
             normalized = _normalize_sentence(sentence)
             if score < sentence_floor or normalized in seen_sentences:
                 continue
+
+            sentence_keywords = _extract_keywords(sentence)
+            keyword_overlap = sentence_keywords & question_keywords
+            keyword_gain = keyword_overlap - covered_keywords
+
+            if not selected:
+                if question_keywords and not keyword_overlap and score < max(sentence_floor, best_sentence_score * 0.9):
+                    continue
+            else:
+                if score < max(sentence_floor, best_sentence_score * 0.9):
+                    continue
+                if question_keywords and not keyword_gain:
+                    continue
 
             if retrieved.chunk.chunk_id in used_chunks and len(selected) >= 2:
                 continue
@@ -54,12 +116,14 @@ class GroundedAnswerGenerator:
             selected.append((score, retrieved, sentence_index, sentence))
             seen_sentences.add(normalized)
             used_chunks.add(retrieved.chunk.chunk_id)
+            covered_keywords.update(keyword_overlap)
             if len(selected) >= max_sentences:
                 break
 
         if not selected:
             return AnswerResult(
                 answer=REFUSAL_MESSAGE,
+                citations=_build_refusal_citations(retrieval),
                 confidence=retrieval.confidence,
                 refused=True,
                 refusal_reason="Supporting evidence was too weak after sentence-level filtering.",
@@ -134,6 +198,34 @@ def _build_citations(selected: list[tuple[float, RetrievedChunk, int, str]]) -> 
     return citations
 
 
+def _build_refusal_citations(retrieval: RetrievalResult) -> list[Citation]:
+    candidates = retrieval.retrieved_chunks or retrieval.considered_chunks
+    if not candidates:
+        return []
+
+    citations: list[Citation] = []
+    seen_chunks: set[str] = set()
+    for retrieved in candidates[:2]:
+        chunk = retrieved.chunk
+        if chunk.chunk_id in seen_chunks:
+            continue
+        seen_chunks.add(chunk.chunk_id)
+        note = retrieval.refusal_reason or "Insufficient support to answer confidently."
+        if retrieved.score < retrieval.applied_floor:
+            note = "Below relevance threshold."
+        citations.append(
+            Citation(
+                doc_id=chunk.doc_id,
+                title=chunk.title,
+                source=chunk.source,
+                chunk_index=chunk.chunk_index,
+                score=round(retrieved.score, 3),
+                note=note,
+            )
+        )
+    return citations
+
+
 def _clean_sentence(sentence: str) -> str:
     cleaned = re.sub(r"\s+", " ", sentence).strip()
     if cleaned and cleaned[-1] not in ".!?":
@@ -144,3 +236,10 @@ def _clean_sentence(sentence: str) -> str:
 def _normalize_sentence(sentence: str) -> str:
     return re.sub(r"\s+", " ", sentence).strip().lower()
 
+
+def _extract_keywords(text: str) -> set[str]:
+    return {
+        token
+        for token in (match.group(0).lower() for match in KEYWORD_PATTERN.finditer(text))
+        if len(token) > 2 and token not in STOPWORDS
+    }
