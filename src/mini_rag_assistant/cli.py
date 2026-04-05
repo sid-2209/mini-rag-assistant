@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from mini_rag_assistant.answering import REFUSAL_MESSAGE
+from mini_rag_assistant.document_loader import SUPPORTED_EXTENSIONS
 from mini_rag_assistant.evaluation import load_evaluation_cases, run_evaluation
 from mini_rag_assistant.pipeline import build_index, load_assistant
 from mini_rag_assistant.vector_store import LocalVectorStore
@@ -25,7 +26,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     ingest_parser = subparsers.add_parser("ingest", help="Build a local vector index from a document folder.")
-    ingest_parser.add_argument("docs_dir", help="Folder containing .md or .txt documents.")
+    ingest_parser.add_argument("docs_dir", nargs="?", help="Folder containing .md or .txt documents.")
     ingest_parser.add_argument("--index-dir", default=".rag_store", help="Directory where the local index is stored.")
     ingest_parser.add_argument("--chunk-size", type=int, default=140, help="Chunk size in words.")
     ingest_parser.add_argument("--chunk-overlap", type=int, default=30, help="Chunk overlap in words.")
@@ -71,8 +72,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _run_ingest(args: argparse.Namespace) -> None:
+    docs_dir = _resolve_docs_dir_for_build(args.docs_dir, action_label="build the index")
+    args.docs_dir = docs_dir
     manifest = build_index(
-        args.docs_dir,
+        docs_dir,
         index_dir=args.index_dir,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
@@ -137,18 +140,51 @@ def _run_evaluate(args: argparse.Namespace) -> None:
 
 def _ensure_assistant(args: argparse.Namespace):
     if args.rebuild:
-        if not args.docs_dir:
-            raise SystemExit("--docs-dir is required when using --rebuild.")
-        build_index(args.docs_dir, index_dir=args.index_dir)
+        docs_dir = _resolve_docs_dir_for_build(args.docs_dir, action_label="rebuild the index")
+        args.docs_dir = docs_dir
+        build_index(docs_dir, index_dir=args.index_dir)
 
     elif not LocalVectorStore.exists(args.index_dir):
-        if not args.docs_dir:
-            raise SystemExit(
-                f"No index found in {Path(args.index_dir).resolve()}. Run ingest first or pass --docs-dir."
-            )
-        build_index(args.docs_dir, index_dir=args.index_dir)
+        docs_dir = _resolve_docs_dir_for_build(args.docs_dir, action_label="build the index")
+        args.docs_dir = docs_dir
+        build_index(docs_dir, index_dir=args.index_dir)
 
     return load_assistant(args.index_dir)
+
+
+def _resolve_docs_dir_for_build(docs_dir: str | None, *, action_label: str) -> str:
+    if docs_dir:
+        _warn_if_unexpected_doc_count(docs_dir)
+        return docs_dir
+
+    if not sys.stdin.isatty():
+        raise SystemExit(
+            f"A document folder is required to {action_label}. Pass --docs-dir or run the CLI interactively."
+        )
+
+    prompted_docs_dir = input("Documents folder (expected 3-5 .txt/.md files)> ").strip()
+    if not prompted_docs_dir:
+        raise SystemExit("A document folder is required.")
+
+    _warn_if_unexpected_doc_count(prompted_docs_dir)
+    return prompted_docs_dir
+
+
+def _warn_if_unexpected_doc_count(docs_dir: str) -> None:
+    root = Path(docs_dir).expanduser()
+    if not root.exists():
+        return
+
+    doc_count = sum(
+        1 for path in root.rglob("*") if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+    if 3 <= doc_count <= 5:
+        return
+
+    print(
+        f"Note: the evaluation setup expects 3-5 documents; found {doc_count} supported files in {root.resolve()}.",
+        file=sys.stderr,
+    )
 
 
 def _print_answer(answer: str, citations, confidence: float) -> None:
@@ -177,8 +213,9 @@ def _print_debug(retrieval) -> None:
     print(f"- confidence: {retrieval.confidence:.3f}")
     if retrieval.refusal_reason:
         print(f"- refusal reason: {retrieval.refusal_reason}")
-    if retrieval.retrieved_chunks:
-        for item in retrieval.retrieved_chunks:
+    chunks_to_show = retrieval.retrieved_chunks or retrieval.considered_chunks
+    if chunks_to_show:
+        for item in chunks_to_show:
             preview = item.chunk.text[:140].strip()
             print(
                 f"- {item.chunk.title} / chunk {item.chunk.chunk_index}: "

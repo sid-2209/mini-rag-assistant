@@ -11,6 +11,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.pipeline import FeatureUnion
 
+from mini_rag_assistant.text_utils import extract_keywords
 from mini_rag_assistant.types import Chunk, RetrievalResult, RetrievedChunk
 
 INDEX_FILE_NAME = "index.pkl"
@@ -98,11 +99,10 @@ class LocalVectorStore:
 
         ranked_indexes = np.argsort(raw_scores)[::-1]
         top_score = float(raw_scores[ranked_indexes[0]])
+        question_keywords = extract_keywords(query)
         considered_chunks = [
-            RetrievedChunk(chunk=self.chunks[index], score=float(raw_scores[index]))
-            for index in ranked_indexes
-            if float(raw_scores[index]) > 0
-        ][: max(top_k, 2)]
+            RetrievedChunk(chunk=self.chunks[index], score=float(raw_scores[index])) for index in ranked_indexes[: max(top_k, 2)]
+        ]
 
         if top_score <= 0:
             return RetrievalResult(
@@ -111,25 +111,33 @@ class LocalVectorStore:
                 confidence=0.0,
                 refusal_reason="No relevant chunk was retrieved for this question.",
                 applied_floor=min_score,
-                considered_chunks=[],
+                considered_chunks=considered_chunks,
             )
 
         applied_floor = max(min_score, top_score * relative_score_floor)
         retrieved_chunks: list[RetrievedChunk] = []
+        rejected_for_keyword_mismatch = False
         for index in ranked_indexes:
             score = float(raw_scores[index])
             if score < applied_floor:
                 continue
-            retrieved_chunks.append(RetrievedChunk(chunk=self.chunks[index], score=score))
+            chunk = self.chunks[index]
+            if question_keywords and not (extract_keywords(chunk.text) & question_keywords):
+                rejected_for_keyword_mismatch = True
+                continue
+            retrieved_chunks.append(RetrievedChunk(chunk=chunk, score=score))
             if len(retrieved_chunks) >= top_k:
                 break
 
         if not retrieved_chunks:
+            refusal_reason = "Top matches were below the minimum relevance threshold."
+            if rejected_for_keyword_mismatch:
+                refusal_reason = "Top matches did not overlap the question's key terms."
             return RetrievalResult(
                 [],
                 top_score=top_score,
-                confidence=top_score,
-                refusal_reason="Top matches were below the minimum relevance threshold.",
+                confidence=round(top_score, 3),
+                refusal_reason=refusal_reason,
                 applied_floor=applied_floor,
                 considered_chunks=considered_chunks,
             )

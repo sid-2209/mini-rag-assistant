@@ -12,6 +12,8 @@ mini-rag ingest data/sample_docs
 mini-rag ask "When does payroll run?"
 ```
 
+If you omit the document folder while building an index, the CLI will prompt for it. The evaluation setup expects a folder containing 3-5 `.txt` or `.md` files.
+
 ## Architecture
 
 The pipeline is intentionally small:
@@ -29,8 +31,9 @@ More detail is in [`docs/architecture.md`](docs/architecture.md).
 
 - The assistant never uses external search or background knowledge.
 - Retrieval uses both an absolute score threshold and a relative floor against the best match.
+- Retrieved chunks must overlap the question's meaningful terms before they can be used for answering.
 - Empty retrieval and low-confidence retrieval return the same refusal message.
-- Refusals include the closest rejected chunk citations when available, so the decision is inspectable.
+- Refusals include the closest rejected chunk citations, including zero-match cases, so the decision is inspectable.
 - The answer is composed only from sentences inside accepted chunks.
 - Citations are always printed, including chunk numbers and retrieval scores.
 
@@ -40,6 +43,12 @@ Build an index:
 
 ```bash
 mini-rag ingest /path/to/documents
+```
+
+Or let the CLI prompt you:
+
+```bash
+mini-rag ingest
 ```
 
 Ask one question:

@@ -4,54 +4,11 @@ import re
 
 from sklearn.metrics.pairwise import cosine_similarity
 
+from mini_rag_assistant.text_utils import extract_keywords
 from mini_rag_assistant.types import AnswerResult, Citation, RetrievalResult, RetrievedChunk
 
 REFUSAL_MESSAGE = "I don’t have enough information in the provided documents to answer this question."
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+|\n+")
-KEYWORD_PATTERN = re.compile(r"[A-Za-z0-9]+")
-STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "can",
-    "could",
-    "did",
-    "do",
-    "does",
-    "for",
-    "from",
-    "had",
-    "has",
-    "have",
-    "how",
-    "in",
-    "is",
-    "it",
-    "its",
-    "of",
-    "on",
-    "or",
-    "the",
-    "their",
-    "there",
-    "these",
-    "this",
-    "to",
-    "was",
-    "were",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "why",
-    "with",
-}
 
 
 class GroundedAnswerGenerator:
@@ -86,7 +43,7 @@ class GroundedAnswerGenerator:
 
         sentence_floor = max(0.12, retrieval.applied_floor * 0.7)
         best_sentence_score = candidate_sentences[0][0]
-        question_keywords = _extract_keywords(question)
+        question_keywords = extract_keywords(question)
         selected: list[tuple[float, RetrievedChunk, int, str]] = []
         seen_sentences: set[str] = set()
         used_chunks: set[str] = set()
@@ -97,12 +54,15 @@ class GroundedAnswerGenerator:
             if score < sentence_floor or normalized in seen_sentences:
                 continue
 
-            sentence_keywords = _extract_keywords(sentence)
+            sentence_keywords = extract_keywords(sentence)
             keyword_overlap = sentence_keywords & question_keywords
             keyword_gain = keyword_overlap - covered_keywords
 
+            if question_keywords and not keyword_overlap:
+                continue
+
             if not selected:
-                if question_keywords and not keyword_overlap and score < max(sentence_floor, best_sentence_score * 0.9):
+                if score < max(sentence_floor, best_sentence_score * 0.9):
                     continue
             else:
                 if score < max(sentence_floor, best_sentence_score * 0.9):
@@ -121,12 +81,18 @@ class GroundedAnswerGenerator:
                 break
 
         if not selected:
+            has_keyword_overlap = any(
+                extract_keywords(sentence) & question_keywords for _, _, _, sentence in candidate_sentences
+            )
+            refusal_reason = "Supporting evidence was too weak after sentence-level filtering."
+            if question_keywords and not has_keyword_overlap:
+                refusal_reason = "Retrieved evidence did not overlap the question's key terms closely enough."
             return AnswerResult(
                 answer=REFUSAL_MESSAGE,
                 citations=_build_refusal_citations(retrieval),
                 confidence=retrieval.confidence,
                 refused=True,
-                refusal_reason="Supporting evidence was too weak after sentence-level filtering.",
+                refusal_reason=refusal_reason,
             )
 
         ordered_sentences = [item[3] for item in selected]
@@ -211,7 +177,9 @@ def _build_refusal_citations(retrieval: RetrievalResult) -> list[Citation]:
             continue
         seen_chunks.add(chunk.chunk_id)
         note = retrieval.refusal_reason or "Insufficient support to answer confidently."
-        if retrieved.score < retrieval.applied_floor:
+        if retrieved.score <= 0:
+            note = "No similarity match."
+        elif retrieved.score < retrieval.applied_floor:
             note = "Below relevance threshold."
         citations.append(
             Citation(
@@ -235,11 +203,3 @@ def _clean_sentence(sentence: str) -> str:
 
 def _normalize_sentence(sentence: str) -> str:
     return re.sub(r"\s+", " ", sentence).strip().lower()
-
-
-def _extract_keywords(text: str) -> set[str]:
-    return {
-        token
-        for token in (match.group(0).lower() for match in KEYWORD_PATTERN.finditer(text))
-        if len(token) > 2 and token not in STOPWORDS
-    }

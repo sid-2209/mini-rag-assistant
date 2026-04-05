@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
 from mini_rag_assistant.answering import REFUSAL_MESSAGE
+from mini_rag_assistant.cli import _ensure_assistant
 from mini_rag_assistant.document_loader import load_documents
 from mini_rag_assistant.pipeline import build_index, load_assistant
 
@@ -52,6 +55,46 @@ class MiniRAGAssistantTests(unittest.TestCase):
         self.assertEqual(answer.answer, REFUSAL_MESSAGE)
         self.assertGreaterEqual(len(answer.citations), 1)
         self.assertTrue(any(citation.note for citation in answer.citations))
+
+    def test_keyword_mismatch_question_refuses_instead_of_guessing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            build_index(SAMPLE_DOCS, index_dir=temp_dir, chunk_size=80, chunk_overlap=20)
+            assistant = load_assistant(temp_dir)
+            answer, _ = assistant.answer("Who is the CEO?")
+
+        self.assertTrue(answer.refused)
+        self.assertEqual(answer.answer, REFUSAL_MESSAGE)
+        self.assertIn("key terms", answer.refusal_reason or "")
+        self.assertGreaterEqual(len(answer.citations), 1)
+
+    def test_zero_similarity_refusal_still_includes_citations(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            build_index(SAMPLE_DOCS, index_dir=temp_dir, chunk_size=80, chunk_overlap=20)
+            assistant = load_assistant(temp_dir)
+            answer, _ = assistant.answer("zzqvbbn wkjhqxz")
+
+        self.assertTrue(answer.refused)
+        self.assertEqual(answer.answer, REFUSAL_MESSAGE)
+        self.assertGreaterEqual(len(answer.citations), 1)
+        self.assertTrue(all(citation.score == 0.0 for citation in answer.citations))
+        self.assertTrue(all(citation.note for citation in answer.citations))
+
+    def test_cli_prompts_for_docs_folder_when_index_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args = Namespace(
+                docs_dir=None,
+                index_dir=temp_dir,
+                rebuild=False,
+            )
+            with patch("builtins.input", return_value=str(SAMPLE_DOCS)), patch(
+                "mini_rag_assistant.cli.sys.stdin.isatty",
+                return_value=True,
+            ):
+                assistant = _ensure_assistant(args)
+                answer, _ = assistant.answer("When does payroll run?")
+
+        self.assertEqual(Path(args.docs_dir).resolve(), SAMPLE_DOCS.resolve())
+        self.assertFalse(answer.refused)
 
 
 if __name__ == "__main__":
