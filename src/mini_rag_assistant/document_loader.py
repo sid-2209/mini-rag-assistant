@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -14,24 +15,19 @@ HEADING_PATTERN = re.compile(r"^#\s+(.+)$")
 
 
 def load_documents(folder: str | Path) -> list[Document]:
-    root = Path(folder).expanduser().resolve()
-    if not root.exists():
-        raise FileNotFoundError(f"Document folder does not exist: {root}")
-
-    paths = sorted(
-        path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
-    if not paths:
-        raise FileNotFoundError(f"No .md or .txt files found in {root}")
+    paths = discover_document_paths(folder)
 
     documents: list[Document] = []
     for index, path in enumerate(paths, start=1):
         raw_text = path.read_text(encoding="utf-8")
-        title, source, content = parse_document_text(
-            raw_text,
-            fallback_title=_humanize_filename(path.stem),
-            fallback_source=path.name,
-        )
+        try:
+            title, source, content = parse_document_text(
+                raw_text,
+                fallback_title=_humanize_filename(path.stem),
+                fallback_source=path.name,
+            )
+        except ValueError as exc:
+            raise ValueError(f"{path}: {exc}") from exc
         documents.append(
             Document(
                 doc_id=f"doc-{index}",
@@ -42,6 +38,33 @@ def load_documents(folder: str | Path) -> list[Document]:
             )
         )
     return documents
+
+
+def discover_document_paths(folder: str | Path) -> list[Path]:
+    root = Path(folder).expanduser().resolve()
+    if not root.exists():
+        raise FileNotFoundError(f"Document folder does not exist: {root}")
+
+    paths = sorted(
+        path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+    if not paths:
+        raise FileNotFoundError(f"No .md or .txt files found in {root}")
+    return paths
+
+
+def fingerprint_documents(folder: str | Path) -> list[dict[str, object]]:
+    fingerprints: list[dict[str, object]] = []
+    for path in discover_document_paths(folder):
+        raw_bytes = path.read_bytes()
+        fingerprints.append(
+            {
+                "path": str(path),
+                "size_bytes": len(raw_bytes),
+                "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+            }
+        )
+    return fingerprints
 
 
 def parse_document_text(
@@ -114,4 +137,3 @@ def _parse_key_values(block: str) -> dict[str, str]:
 
 def _humanize_filename(stem: str) -> str:
     return stem.replace("_", " ").replace("-", " ").strip().title()
-

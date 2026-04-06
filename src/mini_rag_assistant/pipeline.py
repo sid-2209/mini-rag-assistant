@@ -4,7 +4,7 @@ from pathlib import Path
 
 from mini_rag_assistant.answering import GroundedAnswerGenerator
 from mini_rag_assistant.chunking import chunk_documents
-from mini_rag_assistant.document_loader import load_documents
+from mini_rag_assistant.document_loader import fingerprint_documents, load_documents
 from mini_rag_assistant.ollama_client import OllamaClient
 from mini_rag_assistant.types import AnswerResult, RetrievalResult
 from mini_rag_assistant.vector_store import LocalVectorStore, load_manifest
@@ -56,6 +56,7 @@ def build_index(
     ollama_host: str = "http://127.0.0.1:11434",
 ) -> dict[str, object]:
     documents = load_documents(docs_dir)
+    document_fingerprints = fingerprint_documents(docs_dir)
     chunks = chunk_documents(documents, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     ollama_client = OllamaClient(host=ollama_host) if embedding_backend == "ollama" else None
     store = LocalVectorStore.build(
@@ -69,6 +70,7 @@ def build_index(
         "document_count": len(documents),
         "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
+        "document_fingerprints": document_fingerprints,
         "embedding_backend": embedding_backend,
         "embedding_model": embedding_model if embedding_backend == "ollama" else None,
         "documents": [

@@ -140,6 +140,6 @@ More detail is in [`docs/architecture.md`](docs/architecture.md).
 
 - Add a reranker or cross-encoder pass for even tighter evidence ordering.
 - Add richer citation auditing and grounding regression tests.
-- Add incremental indexing and document change detection.
+- Add incremental indexing so document changes do not require a full rebuild.
 - Add multiple local provider backends behind the same guided CLI.
 - Add richer accessibility affordances for long-running terminal operations.

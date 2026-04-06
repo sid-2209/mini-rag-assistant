@@ -8,11 +8,12 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from mini_rag_assistant.answering import REFUSAL_MESSAGE
 from mini_rag_assistant.config import AssistantSettings
-from mini_rag_assistant.document_loader import SUPPORTED_EXTENSIONS
+from mini_rag_assistant.document_loader import SUPPORTED_EXTENSIONS, fingerprint_documents
 from mini_rag_assistant.evaluation import load_evaluation_cases, run_evaluation
 from mini_rag_assistant.ollama_client import OllamaClient, OllamaError
 from mini_rag_assistant.pipeline import build_index, load_assistant
@@ -393,8 +394,11 @@ def _ensure_index_ready(
 ) -> dict[str, object]:
     manifest = _load_manifest_if_exists(args.index_dir)
     index_exists = LocalVectorStore.exists(args.index_dir)
+    resolved_docs_dir = _resolve_existing_docs_dir(args.docs_dir, manifest)
 
-    if not args.docs_dir and isinstance(manifest.get("docs_dir"), str):
+    if resolved_docs_dir and args.docs_dir != resolved_docs_dir:
+        args.docs_dir = resolved_docs_dir
+    elif not args.docs_dir and isinstance(manifest.get("docs_dir"), str):
         args.docs_dir = str(manifest["docs_dir"])
 
     rebuild_reason: str | None = None
@@ -402,10 +406,12 @@ def _ensure_index_ready(
         rebuild_reason = "Rebuild requested."
     elif not index_exists:
         rebuild_reason = "Local index is missing."
-    elif args.docs_dir and isinstance(manifest.get("docs_dir"), str):
-        selected_docs = str(Path(args.docs_dir).expanduser().resolve())
+    elif resolved_docs_dir and isinstance(manifest.get("docs_dir"), str):
+        selected_docs = str(Path(resolved_docs_dir).expanduser().resolve())
         if selected_docs != manifest.get("docs_dir"):
             rebuild_reason = "Documents folder changed."
+        elif _documents_changed_since_last_build(selected_docs, manifest):
+            rebuild_reason = "Documents changed."
 
     if sync_with_current_config and index_exists:
         if manifest.get("embedding_backend") != args.embedding_backend:
@@ -629,6 +635,72 @@ def _supported_doc_count(docs_dir: str | Path) -> int:
     if not root.exists():
         return 0
     return sum(1 for path in root.rglob("*") if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS)
+
+
+def _documents_changed_since_last_build(docs_dir: str | Path, manifest: dict[str, object]) -> bool:
+    current_fingerprints = fingerprint_documents(docs_dir)
+    saved_fingerprints = _manifest_document_fingerprints(manifest)
+    if saved_fingerprints is not None:
+        return current_fingerprints != saved_fingerprints
+
+    current_paths = [item["path"] for item in current_fingerprints]
+    saved_paths = _manifest_document_paths(manifest)
+    if saved_paths is None:
+        return False
+    if current_paths != saved_paths:
+        return True
+
+    built_at = _manifest_saved_timestamp(manifest)
+    if built_at is None:
+        return False
+    return any(Path(path).stat().st_mtime > built_at for path in current_paths)
+
+
+def _manifest_document_fingerprints(manifest: dict[str, object]) -> list[dict[str, object]] | None:
+    raw_value = manifest.get("document_fingerprints")
+    if not isinstance(raw_value, list):
+        return None
+
+    fingerprints: list[dict[str, object]] = []
+    for item in raw_value:
+        if not isinstance(item, dict):
+            return None
+        path = item.get("path")
+        sha256 = item.get("sha256")
+        size_bytes = item.get("size_bytes")
+        if not isinstance(path, str) or not isinstance(sha256, str) or not isinstance(size_bytes, int):
+            return None
+        fingerprints.append(
+            {
+                "path": path,
+                "sha256": sha256,
+                "size_bytes": size_bytes,
+            }
+        )
+    return fingerprints
+
+
+def _manifest_document_paths(manifest: dict[str, object]) -> list[str] | None:
+    raw_value = manifest.get("documents")
+    if not isinstance(raw_value, list):
+        return None
+
+    paths: list[str] = []
+    for item in raw_value:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            return None
+        paths.append(str(item["path"]))
+    return paths
+
+
+def _manifest_saved_timestamp(manifest: dict[str, object]) -> float | None:
+    saved_at = manifest.get("saved_at")
+    if not isinstance(saved_at, str):
+        return None
+    try:
+        return datetime.fromisoformat(saved_at).timestamp()
+    except ValueError:
+        return None
 
 
 def _load_manifest_if_exists(index_dir: str | Path) -> dict[str, object]:

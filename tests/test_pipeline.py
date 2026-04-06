@@ -30,7 +30,7 @@ class FakeLLMClient:
 class MiniRAGAssistantTests(unittest.TestCase):
     def test_document_loader_extracts_title_and_source(self) -> None:
         documents = load_documents(SAMPLE_DOCS)
-        self.assertEqual(len(documents), 4)
+        self.assertEqual(len(documents), 5)
         first = documents[0]
         self.assertTrue(first.title)
         self.assertTrue(first.source)
@@ -39,25 +39,25 @@ class MiniRAGAssistantTests(unittest.TestCase):
     def test_answer_contains_grounded_content_and_citations(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             assistant = self._build_extractive_assistant(temp_dir)
-            answer, _ = assistant.answer("When does payroll run?")
+            answer, _ = assistant.answer("How does Gmail OAuth refresh work?")
 
         self.assertFalse(answer.refused)
-        self.assertIn("last working day", answer.answer.lower())
+        self.assertIn("token refresh happens automatically", answer.answer.lower())
         self.assertGreaterEqual(len(answer.citations), 1)
 
     def test_answer_stays_tight_to_the_question(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             assistant = self._build_extractive_assistant(temp_dir)
-            answer, _ = assistant.answer("What date is Republic Day celebrated in India?")
+            answer, _ = assistant.answer("Does workspace sync store message history?")
 
         self.assertFalse(answer.refused)
-        self.assertIn("26 january", answer.answer.lower())
-        self.assertNotIn("independence day", answer.answer.lower())
+        self.assertIn("does not store message history", answer.answer.lower())
+        self.assertNotIn("authorization page", answer.answer.lower())
 
     def test_unanswerable_question_refuses_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             assistant = self._build_extractive_assistant(temp_dir)
-            answer, _ = assistant.answer("What is the office dress code?")
+            answer, _ = assistant.answer("Who is the CEO?")
 
         self.assertTrue(answer.refused)
         self.assertEqual(answer.answer, REFUSAL_MESSAGE)
@@ -67,7 +67,7 @@ class MiniRAGAssistantTests(unittest.TestCase):
     def test_keyword_mismatch_question_refuses_instead_of_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             assistant = self._build_extractive_assistant(temp_dir)
-            answer, _ = assistant.answer("Who is the CEO?")
+            answer, _ = assistant.answer("How do refreshh tokans work?")
 
         self.assertTrue(answer.refused)
         self.assertEqual(answer.answer, REFUSAL_MESSAGE)
@@ -98,16 +98,16 @@ class MiniRAGAssistantTests(unittest.TestCase):
             llm_client = FakeLLMClient(
                 {
                     "refused": False,
-                    "answer": "The company runs payroll on the last working day of each month.",
+                    "answer": "Token refresh happens automatically when the token expiry time is within a safety window.",
                     "citations": ["E1"],
                 }
             )
             assistant = MiniRAGAssistant(store, llm_client=llm_client, llm_model="fake-llm", answer_mode="ollama")
-            answer, _ = assistant.answer("When does payroll run?")
+            answer, _ = assistant.answer("How does Gmail OAuth refresh work?")
 
         self.assertFalse(answer.refused)
         self.assertEqual(llm_client.calls, 1)
-        self.assertIn("last working day", answer.answer.lower())
+        self.assertIn("safety window", answer.answer.lower())
         self.assertGreaterEqual(len(answer.citations), 1)
 
     def test_unsupported_ollama_answer_falls_back_to_extractive_evidence(self) -> None:
@@ -123,16 +123,16 @@ class MiniRAGAssistantTests(unittest.TestCase):
             llm_client = FakeLLMClient(
                 {
                     "refused": False,
-                    "answer": "Payroll runs every Friday.",
+                    "answer": "Refresh tokens are emailed to admins every Friday.",
                     "citations": ["E1"],
                 }
             )
             assistant = MiniRAGAssistant(store, llm_client=llm_client, llm_model="fake-llm", answer_mode="ollama")
-            answer, _ = assistant.answer("When does payroll run?")
+            answer, _ = assistant.answer("How does Gmail OAuth refresh work?")
 
         self.assertFalse(answer.refused)
         self.assertEqual(llm_client.calls, 1)
-        self.assertIn("last working day", answer.answer.lower())
+        self.assertIn("token refresh happens automatically", answer.answer.lower())
         self.assertNotIn("every friday", answer.answer.lower())
 
     def test_cli_prompts_for_docs_folder_when_index_is_missing(self) -> None:
@@ -152,7 +152,7 @@ class MiniRAGAssistantTests(unittest.TestCase):
                 return_value=True,
             ), patch("mini_rag_assistant.cli._save_settings_from_args"):
                 assistant = _ensure_assistant(args)
-                answer, _ = assistant.answer("When does payroll run?")
+                answer, _ = assistant.answer("How does Gmail OAuth refresh work?")
 
         self.assertEqual(Path(args.docs_dir).resolve(), SAMPLE_DOCS.resolve())
         self.assertFalse(answer.refused)
