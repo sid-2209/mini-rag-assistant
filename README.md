@@ -1,29 +1,66 @@
 # Mini RAG Assistant
 
-A small Python CLI that answers questions only from local `.md` and `.txt` documents. It retrieves the most relevant chunks, applies explicit relevance thresholds, and refuses when evidence is missing or weak.
+A small Python CLI RAG assistant that answers questions only from local `.md` and `.txt` documents. It uses hybrid retrieval, grounded local answer generation through Ollama, explicit refusal handling, and source citations on every answer.
 
 ## Run It
+
+### 1. Start Ollama
+
+Make sure the local Ollama server is running and the required models are available:
+
+```bash
+ollama serve
+ollama pull nomic-embed-text
+ollama pull llama3.2:3b
+```
+
+### 2. Install the project
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .
-mini-rag ingest data/sample_docs
-mini-rag ask "When does payroll run?"
 ```
 
-If you omit the document folder while building an index, the CLI will prompt for it. The evaluation setup expects a folder containing 3-5 `.txt` or `.md` files.
+### 3. Build the index
+
+```bash
+mini-rag ingest data/sample_docs
+```
+
+If you omit the document folder while building an index, the CLI prompts for one. The intended evaluation flow expects a folder containing 3-5 `.txt` or `.md` files.
+
+### 4. Ask questions
+
+```bash
+mini-rag ask "When does payroll run?" --debug
+mini-rag chat --debug
+mini-rag evaluate data/eval/sample_eval.jsonl --docs-dir data/sample_docs
+```
+
+### Optional fallback
+
+If you want to skip Ollama for retrieval or tests, build with lexical-only retrieval:
+
+```bash
+mini-rag ingest data/sample_docs --embedding-backend tfidf
+mini-rag ask "When does payroll run?" --answer-mode extractive
+```
 
 ## Architecture
 
-The pipeline is intentionally small:
+The pipeline is intentionally small but now uses a stronger RAG flow:
 
 1. Documents are loaded from a folder and parsed for `title`, `source`, and content.
 2. Content is chunked with overlap.
-3. Chunks are embedded with local TF-IDF vectors and stored in a persisted local index.
-4. A question retrieves top chunks by cosine similarity.
-5. Low-score results are filtered before answer generation.
-6. The answer is built only from retrieved sentences and always includes citations.
+3. Chunks are indexed with hybrid retrieval data:
+   - dense embeddings from Ollama (`nomic-embed-text` by default)
+   - lexical TF-IDF features for exact-match support
+4. A question is embedded and scored with hybrid dense + lexical retrieval.
+5. Low-score or keyword-mismatched results are filtered before answer generation.
+6. High-signal evidence sentences are selected from retrieved chunks.
+7. An Ollama LLM (`llama3.2:3b` by default) generates a JSON answer using only those evidence snippets.
+8. The answer is validated against the cited evidence before it is returned.
 
 More detail is in [`docs/architecture.md`](docs/architecture.md).
 
@@ -31,11 +68,13 @@ More detail is in [`docs/architecture.md`](docs/architecture.md).
 
 - The assistant never uses external search or background knowledge.
 - Retrieval uses both an absolute score threshold and a relative floor against the best match.
-- Retrieved chunks must overlap the question's meaningful terms before they can be used for answering.
-- Empty retrieval and low-confidence retrieval return the same refusal message.
-- Refusals include the closest rejected chunk citations, including zero-match cases, so the decision is inspectable.
-- The answer is composed only from sentences inside accepted chunks.
-- Citations are always printed, including chunk numbers and retrieval scores.
+- Retrieved chunks must overlap the question's meaningful terms before they can be used.
+- Empty retrieval and low-confidence retrieval produce the same fixed refusal message.
+- The LLM sees only selected evidence snippets, not the whole corpus.
+- LLM output must be valid JSON and must cite the evidence snippet IDs it used.
+- Answers are rejected if they introduce unsupported keywords or numbers that are absent from the cited evidence.
+- If the Ollama answer is invalid, the system falls back to a strict extractive answer instead of guessing.
+- Refusals still include the closest rejected chunk citations so the decision remains inspectable.
 
 ## CLI
 
@@ -69,22 +108,25 @@ Show retrieval diagnostics:
 mini-rag ask "When does payroll run?" --docs-dir /path/to/documents --debug
 ```
 
-Run the sample evaluation:
+Switch models:
 
 ```bash
-mini-rag evaluate data/eval/sample_eval.jsonl --docs-dir data/sample_docs
+mini-rag ingest /path/to/documents --embedding-model nomic-embed-text
+mini-rag ask "When does payroll run?" --llm-model llama3.2:3b
 ```
 
 ## Assumptions And Limitations
 
-- Documents are plain text or Markdown and include either metadata lines or a filename that can serve as a fallback title.
-- The default embeddings are sparse TF-IDF vectors, chosen for reliability and zero model-download overhead.
-- Answer generation is extractive by design. It favors groundedness over polished abstraction.
-- Rebuild the local index after documents change by running `mini-rag ingest` again or using `--rebuild`.
+- Documents are plain text or Markdown and should include either explicit metadata or filenames that can serve as fallbacks.
+- The default setup assumes a local Ollama server is available.
+- The answer generator is grounded, but still intentionally conservative. It may refuse borderline questions rather than risk unsupported synthesis.
+- The index is rebuilt when documents change; incremental re-indexing is not implemented yet.
+- The hybrid retriever is optimized for small document collections, not very large corpora.
 
 ## With More Time
 
-- Swap in a stronger dense embedding model behind the same interface.
-- Add document-change detection and incremental re-indexing.
-- Add richer sentence compression for more concise answers.
-- Expand the evaluation suite with retrieval and refusal metrics.
+- Add a cross-encoder or reranker pass for even tighter evidence ordering.
+- Cache query embeddings and generation traces for repeated evaluations.
+- Add automatic model detection and friendlier setup checks for Ollama.
+- Expand the evaluation suite with retrieval recall, citation accuracy, and grounding regression cases.
+- Support multiple local backends behind the same answer-generation interface.

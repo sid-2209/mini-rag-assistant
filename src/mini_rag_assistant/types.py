@@ -29,6 +29,17 @@ class Chunk:
 class RetrievedChunk:
     chunk: Chunk
     score: float
+    dense_score: float = 0.0
+    lexical_score: float = 0.0
+
+
+@dataclass(slots=True)
+class EvidenceSnippet:
+    evidence_id: str
+    retrieved_chunk: RetrievedChunk
+    sentence_index: int
+    sentence: str
+    score: float
 
 
 @dataclass(slots=True)

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mini-rag-assistant"
-version = "0.1.0"
-description = "A small, grounded CLI RAG assistant for local document question answering."
+version = "0.2.0"
+description = "A grounded local CLI RAG assistant with hybrid retrieval and Ollama-backed answer generation."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,4 +20,3 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
