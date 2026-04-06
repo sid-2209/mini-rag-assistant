@@ -15,13 +15,31 @@ class OllamaClient:
     host: str = "http://127.0.0.1:11434"
     timeout_seconds: float = 120.0
 
+    def is_available(self) -> bool:
+        try:
+            self.list_models()
+        except OllamaError:
+            return False
+        return True
+
+    def list_models(self) -> list[str]:
+        payload = self._request_json("/api/tags", method="GET")
+        models = payload.get("models", [])
+        if not isinstance(models, list):
+            raise OllamaError("Ollama returned an unexpected model list.")
+        names: list[str] = []
+        for item in models:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                names.append(item["name"])
+        return names
+
     def embed(self, model: str, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
-        payload = self._post_json(
+        payload = self._request_json(
             "/api/embed",
-            {
+            body={
                 "model": model,
                 "input": texts,
             },
@@ -53,7 +71,7 @@ class OllamaClient:
         if options:
             body["options"] = options
 
-        payload = self._post_json("/api/generate", body)
+        payload = self._request_json("/api/generate", body=body)
         raw_response = payload.get("response", "")
         if not isinstance(raw_response, str) or not raw_response.strip():
             raise OllamaError("Ollama returned an empty generation payload.")
@@ -63,13 +81,19 @@ class OllamaClient:
         except json.JSONDecodeError as exc:
             raise OllamaError(f"Ollama returned invalid JSON: {raw_response!r}") from exc
 
-    def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    def _request_json(
+        self,
+        path: str,
+        *,
+        body: dict[str, Any] | None = None,
+        method: str = "POST",
+    ) -> dict[str, Any]:
         endpoint = f"{self.host.rstrip('/')}{path}"
-        payload = json.dumps(body).encode("utf-8")
+        payload = json.dumps(body).encode("utf-8") if body is not None else None
         req = request.Request(
             endpoint,
             data=payload,
-            method="POST",
+            method=method,
             headers={"Content-Type": "application/json"},
         )
 

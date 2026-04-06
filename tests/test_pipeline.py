@@ -150,7 +150,7 @@ class MiniRAGAssistantTests(unittest.TestCase):
             with patch("builtins.input", return_value=str(SAMPLE_DOCS)), patch(
                 "mini_rag_assistant.cli.sys.stdin.isatty",
                 return_value=True,
-            ):
+            ), patch("mini_rag_assistant.cli._save_settings_from_args"):
                 assistant = _ensure_assistant(args)
                 answer, _ = assistant.answer("When does payroll run?")
 

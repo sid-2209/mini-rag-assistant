@@ -1,5 +1,6 @@
 .DS_Store
 .venv/
+.mini-rag/
 .rag_store/
 .rag_store*/
 __pycache__/

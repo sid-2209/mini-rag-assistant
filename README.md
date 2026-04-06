@@ -1,20 +1,28 @@
 # Mini RAG Assistant
 
-A small Python CLI RAG assistant that answers questions only from local `.md` and `.txt` documents. It uses hybrid retrieval, grounded local answer generation through Ollama, explicit refusal handling, and source citations on every answer.
+A small local RAG CLI that answers questions only from `.md` and `.txt` documents. It combines hybrid retrieval, grounded Ollama answer generation, explicit refusal handling, and source citations on every answer.
 
-## Run It
+## Best Way To Use It
 
-### 1. Start Ollama
-
-Make sure the local Ollama server is running and the required models are available:
+The CLI is designed to be easy to remember:
 
 ```bash
-ollama serve
-ollama pull nomic-embed-text
-ollama pull llama3.2:3b
+mini-rag
 ```
 
-### 2. Install the project
+That opens a guided terminal menu with simple commands shown next to each option:
+
+- `mini-rag setup`
+- `mini-rag chat`
+- `mini-rag ask`
+- `mini-rag evaluate`
+- `mini-rag doctor`
+
+The menu and setup flow save your defaults under `.mini-rag/settings.json`, so you do not need to keep retyping long commands.
+
+## Quick Start
+
+### 1. Install the project
 
 ```bash
 python3 -m venv .venv
@@ -22,111 +30,116 @@ python3 -m venv .venv
 pip install -e .
 ```
 
-### 3. Build the index
+### 2. Start the assistant
 
 ```bash
-mini-rag ingest data/sample_docs
+mini-rag
 ```
 
-If you omit the document folder while building an index, the CLI prompts for one. The intended evaluation flow expects a folder containing 3-5 `.txt` or `.md` files.
+Then choose:
 
-### 4. Ask questions
+```text
+1. Guided Setup              (mini-rag setup)
+2. Chat With Documents       (mini-rag chat)
+3. Ask One Question          (mini-rag ask)
+4. Run Evaluation            (mini-rag evaluate)
+5. System Doctor             (mini-rag doctor)
+6. Exit                      (exit)
+```
+
+### 3. Let setup do the heavy lifting
+
+`mini-rag setup` will:
+
+- check whether `ollama` is installed
+- detect whether the Ollama server is down
+- show the exact command needed to start it
+- ask `y/yes/n/no` whether it should run that command automatically
+- verify required models such as `nomic-embed-text` and `llama3.2:3b`
+- prompt for the documents folder if needed
+- build the local index
+- save the working defaults for future runs
+
+## Simple Commands
+
+After setup, the short commands are enough:
 
 ```bash
-mini-rag ask "When does payroll run?" --debug
+mini-rag chat
+mini-rag ask
+mini-rag evaluate
+mini-rag doctor
+```
+
+Examples:
+
+```bash
+mini-rag ask
+mini-rag ask "When does payroll run?"
 mini-rag chat --debug
-mini-rag evaluate data/eval/sample_eval.jsonl --docs-dir data/sample_docs
+mini-rag evaluate
+mini-rag doctor --fix
 ```
 
-### Optional fallback
+`mini-rag ask` prompts for the question if you omit it.
 
-If you want to skip Ollama for retrieval or tests, build with lexical-only retrieval:
+`mini-rag evaluate` uses the saved evaluation file or the sample evaluation file if one is available.
+
+## Advanced Commands
+
+The explicit command-line flags are still supported for power users and scripts:
 
 ```bash
-mini-rag ingest data/sample_docs --embedding-backend tfidf
-mini-rag ask "When does payroll run?" --answer-mode extractive
+mini-rag ingest /path/to/documents --embedding-model nomic-embed-text
+mini-rag ask "When does payroll run?" --docs-dir /path/to/documents --index-dir .rag_store --debug
+mini-rag chat --docs-dir /path/to/documents --answer-mode extractive
+mini-rag evaluate data/eval/sample_eval.jsonl --docs-dir data/sample_docs
 ```
 
 ## Architecture
 
-The pipeline is intentionally small but now uses a stronger RAG flow:
+The current pipeline is:
 
-1. Documents are loaded from a folder and parsed for `title`, `source`, and content.
-2. Content is chunked with overlap.
-3. Chunks are indexed with hybrid retrieval data:
+1. Load documents from a folder and parse `title`, `source`, and content.
+2. Chunk content with overlap.
+3. Build a hybrid local index:
    - dense embeddings from Ollama (`nomic-embed-text` by default)
    - lexical TF-IDF features for exact-match support
-4. A question is embedded and scored with hybrid dense + lexical retrieval.
-5. Low-score or keyword-mismatched results are filtered before answer generation.
-6. High-signal evidence sentences are selected from retrieved chunks.
-7. An Ollama LLM (`llama3.2:3b` by default) generates a JSON answer using only those evidence snippets.
-8. The answer is validated against the cited evidence before it is returned.
+4. Retrieve top chunks with hybrid dense + lexical scoring.
+5. Apply hallucination controls:
+   - absolute score threshold
+   - relative score floor
+   - keyword overlap checks
+6. Select high-signal evidence sentences from retrieved chunks.
+7. Ask an Ollama LLM (`llama3.2:3b` by default) for a grounded JSON answer using only those snippets.
+8. Validate the answer against the cited evidence before returning it.
+9. Fall back to strict extractive composition if the LLM output is weak, invalid, or unsupported.
 
 More detail is in [`docs/architecture.md`](docs/architecture.md).
 
 ## Hallucination Control
 
 - The assistant never uses external search or background knowledge.
-- Retrieval uses both an absolute score threshold and a relative floor against the best match.
-- Retrieved chunks must overlap the question's meaningful terms before they can be used.
-- Empty retrieval and low-confidence retrieval produce the same fixed refusal message.
-- The LLM sees only selected evidence snippets, not the whole corpus.
-- LLM output must be valid JSON and must cite the evidence snippet IDs it used.
-- Answers are rejected if they introduce unsupported keywords or numbers that are absent from the cited evidence.
-- If the Ollama answer is invalid, the system falls back to a strict extractive answer instead of guessing.
-- Refusals still include the closest rejected chunk citations so the decision remains inspectable.
-
-## CLI
-
-Build an index:
-
-```bash
-mini-rag ingest /path/to/documents
-```
-
-Or let the CLI prompt you:
-
-```bash
-mini-rag ingest
-```
-
-Ask one question:
-
-```bash
-mini-rag ask "What date is Republic Day celebrated in India?" --docs-dir /path/to/documents
-```
-
-Run interactive mode:
-
-```bash
-mini-rag chat --docs-dir /path/to/documents
-```
-
-Show retrieval diagnostics:
-
-```bash
-mini-rag ask "When does payroll run?" --docs-dir /path/to/documents --debug
-```
-
-Switch models:
-
-```bash
-mini-rag ingest /path/to/documents --embedding-model nomic-embed-text
-mini-rag ask "When does payroll run?" --llm-model llama3.2:3b
-```
+- Empty retrieval and low-confidence retrieval both produce the same fixed refusal message.
+- Retrieved chunks must overlap the question's meaningful terms before they are used.
+- The LLM only sees filtered evidence snippets, not the whole corpus.
+- LLM output must be valid JSON and cite evidence snippet IDs.
+- Answers are rejected if they introduce unsupported keywords or numbers.
+- When the LLM fails or over-refuses, the system falls back to a stricter extractive answer instead of guessing.
+- Refusals still cite the closest rejected chunks so the decision is inspectable.
 
 ## Assumptions And Limitations
 
-- Documents are plain text or Markdown and should include either explicit metadata or filenames that can serve as fallbacks.
-- The default setup assumes a local Ollama server is available.
-- The answer generator is grounded, but still intentionally conservative. It may refuse borderline questions rather than risk unsupported synthesis.
+- Documents are plain text or Markdown and should include explicit metadata or filenames that can act as fallbacks.
+- The default path assumes a local Ollama installation.
+- The assistant is intentionally conservative and may refuse borderline questions rather than invent unsupported detail.
 - The index is rebuilt when documents change; incremental re-indexing is not implemented yet.
-- The hybrid retriever is optimized for small document collections, not very large corpora.
+- The hybrid retriever is designed for small local collections, not very large corpora.
 
 ## With More Time
 
-- Add a cross-encoder or reranker pass for even tighter evidence ordering.
-- Cache query embeddings and generation traces for repeated evaluations.
-- Add automatic model detection and friendlier setup checks for Ollama.
-- Expand the evaluation suite with retrieval recall, citation accuracy, and grounding regression cases.
-- Support multiple local backends behind the same answer-generation interface.
+- Add a reranker or cross-encoder pass for even tighter evidence ordering.
+- Add richer citation auditing and grounding regression tests.
+- Add incremental indexing and document change detection.
+- Add multiple local provider backends behind the same guided CLI.
+- Add richer accessibility affordances for long-running terminal operations.
